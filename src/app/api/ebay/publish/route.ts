@@ -1,14 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/db/supabase-server";
-import { getEbayConfig } from "@/lib/ebay/config";
-import { getBlockingSetupMessages, getEbaySetupStatus } from "@/lib/ebay/setup";
-import { getValidEbayAccessToken } from "@/lib/ebay/tokens";
-import {
-  createOffer,
-  createOrReplaceInventoryItem,
-  publishOffer,
-} from "@/lib/ebay/api";
-import { buildRoadmapSku } from "@/lib/ebay/sku";
+import { callN8nWebhook, N8nWebhookError } from "@/lib/n8n/webhook";
 
 interface PublishRequestBody {
   inventory_item_id?: string;
@@ -20,6 +12,20 @@ interface PublishRequestBody {
   };
 }
 
+interface N8nPublishResult {
+  data: {
+    item: Record<string, unknown>;
+    ebay: {
+      sku: string;
+      offer_id: string;
+      listing_id: string;
+      listing_url: string | null;
+      category_id: string;
+    };
+  };
+}
+
+// POST /api/ebay/publish — publish listing to eBay via n8n workflow
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
@@ -47,22 +53,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const setupStatus = await getEbaySetupStatus(supabase, user.id);
-    if (!setupStatus.ready) {
-      return NextResponse.json(
-        {
-          error: {
-            message: "eBay setup is incomplete. Review the blocking setup checks in Settings before publishing.",
-            code: "SETUP_INCOMPLETE",
-            details: getBlockingSetupMessages(setupStatus),
-          },
-        },
-        { status: 400 },
-      );
-    }
-
-    const config = getEbayConfig();
-
+    // Fetch the inventory item to validate it exists and belongs to this user
     const { data: item, error: itemError } = await supabase
       .from("inventory_items")
       .select("*, books_catalog(*), item_images(*)")
@@ -90,6 +81,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Validate listing prerequisites before sending to n8n
     const missingFields: string[] = [];
     if (!item.listing_title) missingFields.push("listing_title");
     if (!item.listing_description) missingFields.push("listing_description");
@@ -118,83 +110,50 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const accessToken = await getValidEbayAccessToken(supabase, user.id);
-    const sku =
-      item.sku ||
-      buildRoadmapSku({
-        title: book.title,
-        subtitle: book.subtitle,
-        description: book.description,
-        format: body.sku_options?.format,
-        webEnabled: Boolean(body.sku_options?.web_enabled),
-        isFirstEdition: Boolean(body.sku_options?.is_first_edition),
-        uniqueSuffix: item.id,
-      });
-
-    const categoryId = body.category_id || config.defaultCategoryId;
-
-    await createOrReplaceInventoryItem(accessToken, sku, {
-      title: item.listing_title,
-      description: item.listing_description,
-      condition: item.condition,
-      imageUrls: images,
-      quantity: item.quantity || 1,
-      isbn: book.isbn,
-      authors: book.authors,
-      publisher: book.publisher,
-      categories: book.categories,
-    });
-
-    const offer = await createOffer(accessToken, {
-      sku,
-      categoryId,
-      listingDescription: item.listing_description,
-      availableQuantity: item.quantity || 1,
-      price: Number(item.listing_price),
-    });
-
-    const publishResult = await publishOffer(accessToken, offer.offerId);
-
-    const listingId = publishResult.listingId || item.ebay_listing_id;
-    const listingUrl =
-      publishResult.listingUrl ||
-      (listingId
-        ? `https://www.ebay.com/itm/${listingId}`
-        : null);
-
-    const { data: updated, error: updateError } = await supabase
-      .from("inventory_items")
-      .update({
-        sku,
-        status: "listed",
-        listed_at: new Date().toISOString(),
-        ebay_listing_id: listingId,
-        ebay_offer_id: offer.offerId,
-        ebay_listing_url: listingUrl,
-      })
-      .eq("id", item.id)
-      .eq("user_id", user.id)
-      .select("*, books_catalog(*), item_images(*)")
-      .single();
-
-    if (updateError) {
-      throw updateError;
-    }
-
-    return NextResponse.json({
-      data: {
-        item: updated,
-        ebay: {
-          sku,
-          offer_id: offer.offerId,
-          listing_id: listingId,
-          listing_url: listingUrl,
-          category_id: categoryId,
+    // Delegate to n8n workflow: Publish to eBay
+    // n8n handles eBay OAuth, inventory item creation, offer creation, and publishing
+    const result = await callN8nWebhook<N8nPublishResult>(
+      "ebay/publish",
+      {
+        inventory_item_id: body.inventory_item_id,
+        user_id: user.id,
+        category_id: body.category_id,
+        sku_options: body.sku_options,
+        // Send the full item data so n8n doesn't need to re-query Supabase
+        item: {
+          id: item.id,
+          sku: item.sku,
+          listing_title: item.listing_title,
+          listing_description: item.listing_description,
+          listing_price: item.listing_price,
+          condition: item.condition,
+          quantity: item.quantity || 1,
+          images,
+          book: {
+            isbn: book.isbn,
+            title: book.title,
+            subtitle: book.subtitle,
+            description: book.description,
+            authors: book.authors,
+            publisher: book.publisher,
+            categories: book.categories,
+          },
         },
       },
-    });
+      { timeout: 45_000 }, // eBay API calls can be slow
+    );
+
+    return NextResponse.json(result);
   } catch (error) {
     console.error("[EBAY_PUBLISH_POST]", error);
+
+    if (error instanceof N8nWebhookError) {
+      return NextResponse.json(
+        { error: { message: `n8n workflow error: ${error.message}`, code: "N8N_ERROR" } },
+        { status: error.statusCode >= 500 ? 502 : error.statusCode },
+      );
+    }
+
     const message = error instanceof Error ? error.message : "Failed to publish to eBay";
 
     return NextResponse.json(

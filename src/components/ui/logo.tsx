@@ -44,6 +44,16 @@ export function Logo({ size = "md", className }: LogoProps) {
         )}
       >
         Scry<span className="text-accent">Vault</span>
+        <span
+          className={cn(
+            "ml-1 rounded bg-accent/20 px-1.5 py-0.5 font-mono font-medium text-accent",
+            size === "sm" && "text-[10px]",
+            size === "md" && "text-xs",
+            size === "lg" && "text-sm",
+          )}
+        >
+          n8n
+        </span>
       </span>
     </div>
   );

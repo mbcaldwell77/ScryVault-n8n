@@ -14,9 +14,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "ScryVault — Collectible Book Inventory & eBay Listings",
+  title: "ScryVault n8n Edition — Collectible Book Inventory & eBay Listings",
   description:
-    "AI-powered inventory management and eBay listing generation for collectible booksellers.",
+    "n8n-powered inventory management and eBay listing generation for collectible booksellers. Business logic lives in n8n workflows.",
 };
 
 export default function RootLayout({
