@@ -51,3 +51,6 @@ next-env.d.ts
 
 .vercel
 .vscode/
+
+# Claude Code
+CLAUDE.md
