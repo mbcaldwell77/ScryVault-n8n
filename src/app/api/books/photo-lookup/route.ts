@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const result = await callN8nWebhook<{ data: BookMetadata | null }>(
+    const result = await callN8nWebhook<{ data: Record<string, unknown> | null }>(
       "books/photo-lookup",
       { image: imageBase64, mimeType },
       { timeout: 60_000 },
@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const raw = result.data as Record<string, unknown>;
+    const raw = result.data;
     const title = (raw.title as string) || "";
     if (!title) {
       return NextResponse.json(
