@@ -1,9 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/db/supabase-server";
 import { callN8nWebhook, N8nWebhookError } from "@/lib/n8n/webhook";
-import type { GenerationResult } from "@/lib/claude/types";
+import type { GenerationResult, ListingGenerationInput } from "@/lib/claude/types";
+import { runListingAgent, shouldUseAgent } from "@/lib/agents";
 
-// POST /api/listings/generate — generate listing content via n8n workflow
+// POST /api/listings/generate — generate listing content
+//
+// Routing:
+//   AGENT_MODE=true  + ANTHROPIC_API_KEY set → Anthropic Agent SDK loop (in-process)
+//   otherwise                                → Gemini via n8n webhook
+//
+// Both paths return the same shape: { data: GenerationResult }
+// Agent path adds an extra `data.agent` field for trace/debug.
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
@@ -47,30 +55,36 @@ export async function POST(request: NextRequest) {
 
     const book = item.books_catalog;
 
-    // Build input for n8n workflow
+    // Build input shared by both paths
     const images = (item.item_images || [])
       .sort((a: { display_order: number }, b: { display_order: number }) => a.display_order - b.display_order)
       .map((img: { public_url: string }) => img.public_url);
 
-    // Delegate to n8n workflow: Generate Listing
-    // n8n handles Claude API call, prompt engineering, and JSON parsing
+    const generationInput: ListingGenerationInput = {
+      title: book.title,
+      subtitle: book.subtitle,
+      authors: book.authors,
+      publisher: book.publisher,
+      published_date: book.published_date,
+      isbn: book.isbn,
+      page_count: book.page_count,
+      condition: item.condition,
+      condition_notes: item.condition_notes,
+      categories: book.categories,
+      language: book.language,
+      image_urls: images,
+    };
+
+    // ── Path A: Agent SDK (AGENT_MODE=true) ──
+    if (shouldUseAgent()) {
+      const agentResult = await runListingAgent(generationInput);
+      return NextResponse.json({ data: agentResult });
+    }
+
+    // ── Path B: Gemini via n8n (default) ──
     const result = await callN8nWebhook<{ data: GenerationResult }>(
       "listings/generate",
-      {
-        inventory_item_id,
-        title: book.title,
-        subtitle: book.subtitle,
-        authors: book.authors,
-        publisher: book.publisher,
-        published_date: book.published_date,
-        isbn: book.isbn,
-        page_count: book.page_count,
-        condition: item.condition,
-        condition_notes: item.condition_notes,
-        categories: book.categories,
-        language: book.language,
-        image_urls: images,
-      },
+      { inventory_item_id, ...generationInput },
       { timeout: 60_000 }, // Listing generation can take a while
     );
 

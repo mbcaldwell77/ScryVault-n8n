@@ -16,6 +16,7 @@ import {
   Zap,
 } from "lucide-react";
 import type { GeneratedListing } from "@/lib/claude/types";
+import { AgentTracePanel, type AgentTrace } from "./agent-trace-panel";
 
 interface ListingPreviewProps {
   inventoryItemId: string;
@@ -58,6 +59,9 @@ export function ListingPreview({
     estimated_cost: number;
   } | null>(null);
 
+  // Agent trace (only set when AGENT_MODE=true on the API side)
+  const [agentTrace, setAgentTrace] = useState<AgentTrace | null>(null);
+
   async function handleGenerate() {
     setGenerating(true);
     setError(null);
@@ -75,7 +79,7 @@ export function ListingPreview({
         throw new Error(json.error?.message || "Generation failed");
       }
 
-      const { listing, usage } = json.data;
+      const { listing, usage, agent } = json.data;
       setTitle(listing.listing_title);
       setDescription(listing.listing_description);
       setConditionNotes(listing.listing_condition_notes);
@@ -83,6 +87,7 @@ export function ListingPreview({
         setPrice(String(listing.suggested_price));
       }
       setLastUsage(usage);
+      setAgentTrace(agent ?? null);
       setHasGenerated(true);
       setEditing(false);
       toast({
@@ -329,8 +334,14 @@ export function ListingPreview({
             {lastUsage.input_tokens.toLocaleString()} in / {lastUsage.output_tokens.toLocaleString()} out
           </span>
           <span>~${lastUsage.estimated_cost.toFixed(4)}</span>
+          {agentTrace && (
+            <span className="text-accent/70">via Agent SDK</span>
+          )}
         </div>
       )}
+
+      {/* Agent trace (only when AGENT_MODE=true) */}
+      {agentTrace && <AgentTracePanel trace={agentTrace} />}
 
       {/* Accept button */}
       <div className="flex gap-2">
