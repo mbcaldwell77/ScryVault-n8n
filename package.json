@@ -10,13 +10,13 @@
     "db:migrate": "supabase db push --linked"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.90.0",
+    "@anthropic-ai/sdk": "0.91.1",
     "@supabase/ssr": "^0.8.0",
     "@supabase/supabase-js": "^2.97.0",
     "clsx": "^2.1.1",
     "html5-qrcode": "^2.3.8",
     "lucide-react": "^0.575.0",
-    "next": "16.1.6",
+    "next": "16.4.2",
     "react": "19.2.3",
     "react-dom": "19.2.3"
   },
